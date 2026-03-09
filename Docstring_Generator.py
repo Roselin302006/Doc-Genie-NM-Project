@@ -1,0 +1,502 @@
+class DocGenieAnalyzer:
+    """Analyze Python functions and generate professional docstrings"""
+
+    @staticmethod
+    def extract_function_signature(code):
+        """Extract function name, parameters, return type from code"""
+        try:
+            tree = ast.parse(code)
+            func_def = tree.body[0]
+            if not isinstance(func_def, ast.FunctionDef):
+                return None, None
+
+            func_name = func_def.name
+            params = []
+
+            for arg in func_def.args.args:
+                param_type = "Any"
+                if arg.annotation:
+                    param_type = ast.unparse(arg.annotation) if hasattr(ast, 'unparse') else "Any"
+                params.append({
+                    'name': arg.arg,
+                    'type': param_type,
+                    'default': None
+                })
+
+            for i, default in enumerate(func_def.args.defaults):
+                idx = len(params) - len(func_def.args.defaults) + i
+                if idx >= 0:
+                    params[idx]['default'] = ast.unparse(default) if hasattr(ast, 'unparse') else str(default)
+
+            return_type = "Any"
+            if func_def.returns:
+                return_type = ast.unparse(func_def.returns) if hasattr(ast, 'unparse') else "Any"
+
+            return {
+                'name': func_name,
+                'params': params,
+                'return_type': return_type
+            }, func_def
+        except:
+            return None, None
+
+    @staticmethod
+    def analyze_function_logic(func_def, code):
+        """Deep analysis of function body to understand actual behavior"""
+        try:
+            body = func_def.body
+            analysis = {
+                'has_loops': False,
+                'has_conditions': False,
+                'has_return': False,
+                'loop_types': [],
+                'condition_types': [],
+                'operations': [],
+                'return_types': [],
+                'variables_used': set(),
+                'function_calls': [],
+                'description': ""
+            }
+
+            # Walk through AST
+            for node in ast.walk(func_def):
+                if isinstance(node, ast.For):
+                    analysis['has_loops'] = True
+                    analysis['loop_types'].append('for')
+                elif isinstance(node, ast.While):
+                    analysis['has_loops'] = True
+                    analysis['loop_types'].append('while')
+                elif isinstance(node, ast.If):
+                    analysis['has_conditions'] = True
+                    analysis['condition_types'].append('if')
+                elif isinstance(node, ast.Return):
+                    analysis['has_return'] = True
+                    if node.value:
+                        analysis['return_types'].append(ast.unparse(node.value) if hasattr(ast, 'unparse') else 'value')
+                elif isinstance(node, ast.BinOp):
+                    op = node.op
+                    if isinstance(op, ast.Mult):
+                        analysis['operations'].append('multiplication')
+                    elif isinstance(op, ast.Add):
+                        analysis['operations'].append('addition')
+                    elif isinstance(op, ast.Sub):
+                        analysis['operations'].append('subtraction')
+                    elif isinstance(op, ast.Div):
+                        analysis['operations'].append('division')
+                elif isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Name):
+                        analysis['function_calls'].append(node.func.id)
+                elif isinstance(node, ast.Name):
+                    analysis['variables_used'].add(node.id)
+
+            # Build detailed description
+            description_parts = []
+
+            if func_def.name:
+                description_parts.append(f"Executes {func_def.name} operation")
+
+            if analysis['has_conditions']:
+                description_parts.append("with conditional logic")
+
+            if analysis['has_loops']:
+                description_parts.append("and iterates through values")
+
+            if 'multiplication' in analysis['operations'] and 'subtraction' in analysis['operations']:
+                description_parts.append("performing mathematical calculations")
+            elif 'multiplication' in analysis['operations']:
+                description_parts.append("using multiplication operations")
+            elif 'addition' in analysis['operations']:
+                description_parts.append("using addition operations")
+            elif 'division' in analysis['operations']:
+                description_parts.append("using division operations")
+
+            if analysis['return_types']:
+                description_parts.append(f"and returns the computed result")
+
+            analysis['description'] = " ".join(description_parts) + "."
+            if len(analysis['description']) < 20:
+                analysis['description'] = "Performs computation based on input parameters."
+
+            return analysis
+        except Exception as e:
+            return {
+                'has_loops': False,
+                'has_conditions': False,
+                'has_return': False,
+                'description': "Executes function logic based on provided parameters."
+            }
+
+    @staticmethod
+    def generate_google_docstring(signature, analysis, code):
+        """Generate accurate Google-style docstring"""
+        summary = analysis.get('description', 'Processes input and returns result.')
+
+        docstring = f'    """{summary}\n'
+
+        if signature['params']:
+            docstring += '\n    Args:\n'
+            for param in signature['params']:
+                default_str = f" (default: {param['default']})" if param['default'] else ""
+                docstring += f"        {param['name']} ({param['type']}): Parameter for controlling {param['name']} behavior{default_str}.\n"
+
+        docstring += f"\n    Returns:\n        {signature['return_type']}: The result of the computation.\n"
+        docstring += '    """\n'
+
+        return docstring
+
+    @staticmethod
+    def generate_numpy_docstring(signature, analysis, code):
+        """Generate accurate NumPy-style docstring"""
+        summary = analysis.get('description', 'Processes input and returns result.')
+
+        docstring = f'    """{summary}\n'
+
+        if signature['params']:
+            docstring += '\n    Parameters\n    ----------\n'
+            for param in signature['params']:
+                default_str = f", default: {param['default']}" if param['default'] else ""
+                docstring += f"    {param['name']} : {param['type']}{default_str}\n"
+                docstring += f"        Parameter for controlling {param['name']} behavior.\n"
+
+        docstring += f"\n    Returns\n    -------\n    {signature['return_type']}\n"
+        docstring += f"        The result of the computation.\n"
+        docstring += '    """\n'
+
+        return docstring
+
+analyzer = DocGenieAnalyzer()
+generation_history = []
+
+def generate_docstring(code, style="google"):
+    """Generate docstring for Python function with accurate analysis"""
+
+    if not code.strip():
+        return None, "❌ Empty code provided!"
+
+    try:
+        signature, func_def = analyzer.extract_function_signature(code)
+        if not signature:
+            return None, "❌ Invalid Python function code!"
+
+        # Deep analysis of the function
+        analysis = analyzer.analyze_function_logic(func_def, code)
+
+        if style.lower() == "google":
+            docstring = analyzer.generate_google_docstring(signature, analysis, code)
+        else:
+            docstring = analyzer.generate_numpy_docstring(signature, analysis, code)
+
+        # Extract function definition line
+        code_lines = code.split('\n')
+        func_line = code_lines[0]
+
+        # Build final function with docstring
+        final_code = func_line + '\n' + docstring
+        for line in code_lines[1:]:
+            final_code += line + '\n'
+
+        generation_history.append({
+            'code': code,
+            'docstring': docstring,
+            'style': style,
+            'timestamp': datetime.now().isoformat(),
+            'analysis': analysis
+        })
+
+        return final_code, f"✅ {style.upper()} Docstring Generated!"
+
+    except Exception as e:
+        return None, f"❌ Error: {str(e)}"
+
+def process_upload(file):
+
+    if file is None:
+        return "", "No file uploaded"
+
+    try:
+        with open(file.name, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        return code, "✅ File uploaded successfully"
+
+    except Exception as e:
+        return "", f"❌ File failed to read: {str(e)}"
+
+def clear_history():
+    """Clear generation history"""
+    global generation_history
+    generation_history = []
+    return "✅ History cleared!"
+
+def download_pdf():
+    """Download all generated docstrings as PDF"""
+    if not generation_history:
+        return "❌ No documentation generated!", None
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"doc_genie_{timestamp}.pdf"
+
+    try:
+        doc = SimpleDocTemplate(filename, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+        styles = getSampleStyleSheet()
+        story = []
+
+        title_style = ParagraphStyle(
+            'Title',
+            parent=styles['Heading1'],
+            fontSize=24,
+            textColor='#FF6B6B',
+            spaceAfter=20,
+            alignment=1
+        )
+
+        code_style = ParagraphStyle(
+            'Code',
+            parent=styles['Normal'],
+            fontSize=9,
+            fontName='Courier',
+            backColor='#F0F0F0',
+            borderColor='#CCCCCC',
+            borderWidth=1,
+            borderPadding=6
+        )
+
+        story.append(Paragraph("📚 Doc-Genie Documentation Report", title_style))
+        story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        story.append(Spacer(1, 0.3*inch))
+
+        for i, gen in enumerate(generation_history, 1):
+            story.append(Paragraph(f"<b>Documentation #{i}</b>", styles['Heading2']))
+            story.append(Paragraph(f"<b>Style:</b> {gen['style'].upper()}", styles['Normal']))
+            story.append(Spacer(1, 0.1*inch))
+
+            story.append(Paragraph("<b>Original Code:</b>", styles['Normal']))
+            story.append(Preformatted(gen['code'], code_style))
+            story.append(Spacer(1, 0.15*inch))
+
+            story.append(Paragraph("<b>Generated Docstring:</b>", styles['Normal']))
+            story.append(Preformatted(gen['docstring'], code_style))
+            story.append(Spacer(1, 0.3*inch))
+
+            if i % 2 == 0 and i != len(generation_history):
+                story.append(PageBreak())
+
+        story.append(Spacer(1, 0.3*inch))
+        story.append(Paragraph(f"Total Documentations: {len(generation_history)}", styles['Normal']))
+
+        doc.build(story)
+        return f"✅ PDF Downloaded: {filename}", filename
+    except Exception as e:
+        return f"❌ Error: {str(e)}", None
+
+def download_txt():
+    """Download all generated docstrings as TXT"""
+    if not generation_history:
+        return "❌ No documentation generated!", None
+
+    content = f"Doc-Genie Documentation Report\nGenerated: {datetime.now()}\n{'='*80}\n\n"
+
+    for i, gen in enumerate(generation_history, 1):
+        content += f"Documentation #{i}\n"
+        content += f"Style: {gen['style'].upper()}\n"
+        content += f"Generated: {gen['timestamp']}\n"
+        content += f"{'-'*80}\n\n"
+        content += f"ORIGINAL CODE:\n{gen['code']}\n\n"
+        content += f"GENERATED DOCSTRING:\n{gen['docstring']}\n\n"
+        content += f"{'-'*80}\n\n"
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"doc_genie_{timestamp}.txt"
+
+    try:
+        Path(filename).write_text(content)
+        return f"✅ TXT Downloaded: {filename}", filename
+    except Exception as e:
+        return f"❌ Error: {str(e)}", None
+
+def generate_whatsapp_link():
+    """Generate WhatsApp share link"""
+    if not generation_history:
+        return "❌ No documentation to share!"
+
+    message = "📚 *Doc-Genie Documentation*\n\n"
+    for i, gen in enumerate(generation_history[-3:], 1):
+        message += f"*Doc {i}:*\n"
+        message += f"Style: {gen['style']}\n"
+        message += f"`{gen['code'][:60]}...`\n\n"
+
+    encoded = urllib.parse.quote(message)
+    link = f"https://wa.me/?text={encoded}"
+
+    return f"✅ WhatsApp Link:\n\n{link}\n\n📱 Share with team!"
+
+def generate_facebook_link():
+    """Generate Facebook share link"""
+    if not generation_history:
+        return "❌ No documentation to share!"
+
+    message = f"I generated {len(generation_history)} professional Python function docstrings with Doc-Genie! Check it out!"
+    encoded = urllib.parse.quote(message)
+    link = f"https://www.facebook.com/sharer/sharer.php?quote={encoded}"
+
+    return f"✅ Facebook Link:\n\n{link}\n\n👍 Share on Facebook!"
+
+print("🚀 Loading Doc-Genie Improved Version...")
+
+with gr.Blocks(
+    title="Doc-Genie - Python Documentation Generator",
+    theme=gr.themes.Soft(),
+    css="""
+
+/* HEADER */
+
+#header{
+background:linear-gradient(90deg,#6a11cb,#8e2de2);
+padding:18px;
+border-radius:10px;
+text-align:center;
+color:white;
+font-size:28px;
+font-weight:bold;
+margin-bottom:15px;
+}
+
+/* BACKGROUND */
+
+body{
+background:linear-gradient(135deg,#1a1a2e,#16213e);
+}
+
+.gradio-container{
+background:linear-gradient(135deg,#1a1a2e,#16213e);
+}
+
+/* ALL HEADINGS WHITE */
+
+h1,h2,h3,h4,.gr-markdown{
+color:white !important;
+}
+
+/* BUTTON DEFAULT PURPLE */
+
+button{
+background:linear-gradient(90deg,#6a11cb,#8e2de2) !important;
+color:white !important;
+border:none !important;
+}
+/* CLEAR BUTTON */
+
+#clear-btn{
+background:#ff3b3b !important;
+}
+
+/* WHATSAPP */
+
+#whatsapp-btn{
+background:#25D366 !important;
+}
+
+/* FACEBOOK */
+
+#facebook-btn{
+background:#1877F2 !important;
+}
+"""
+
+) as demo:
+
+    gr.Markdown('<div id="header">✨ Doc-Genie v2.0</div>')
+    gr.Markdown("### Professional Python Function Docstring Generator")
+
+    with gr.Row():
+
+        # LEFT SIDE
+        with gr.Column(scale=2):
+
+            gr.Markdown("### 📄 Python Code Input")
+
+            code_input = gr.Code(
+                language="python",
+                lines=10,
+                label="Code",
+                value="def my_function():\n    pass"
+            )
+
+            file_upload = gr.File(label="Upload .py File")
+
+            upload_status = gr.Textbox(label="Upload Status", interactive=False)
+
+            file_upload.change(
+                process_upload,
+                inputs=file_upload,
+                outputs=[code_input, upload_status]
+            )
+
+            gr.Markdown("### Docstring Style")
+
+            docstring_style = gr.Radio(
+                ["google", "numpy"],
+                value="google"
+            )
+
+            generate_btn = gr.Button(
+                "⚡ Generate Docstring",
+                elem_id="generate-btn"
+            )
+
+        # RIGHT SIDE
+        with gr.Column(scale=1):
+
+            gr.Markdown("### ⚙ Controls")
+
+            clear_btn = gr.Button("🗑️ Clear History", elem_id="clear-btn")
+
+            clear_btn.click(clear_history, outputs=upload_status)
+
+            gr.Markdown("### 📥 Export")
+
+            pdf_btn = gr.Button("📄 Download PDF")
+            txt_btn = gr.Button("📝 Download TXT")
+
+            pdf_file = gr.File(label="PDF File")
+            txt_file = gr.File(label="TXT File")
+
+            export_status = gr.Textbox(label="Export Status")
+
+            pdf_btn.click(download_pdf, outputs=[export_status, pdf_file])
+            txt_btn.click(download_txt, outputs=[export_status, txt_file])
+
+            gr.Markdown("### 🔗 Share")
+
+            whatsapp_btn = gr.Button("💬 WhatsApp", elem_id="whatsapp-btn")
+            facebook_btn = gr.Button("👍 Facebook", elem_id="facebook-btn")
+
+    # RESULT SECTION
+
+    gr.Markdown("### 📄 Generated Output")
+
+    code_output = gr.Code(
+       language="python",
+       label="Function with Docstring",
+       lines=15,
+       interactive=False
+    )
+
+    gen_status = gr.Textbox(label="Status", interactive=False, lines=1)
+
+    share_output = gr.Textbox(label="Share Link", interactive=False, lines=3)
+
+    # BUTTON EVENTS
+
+    generate_btn.click(
+        generate_docstring,
+        inputs=[code_input, docstring_style],
+        outputs=[code_output, gen_status]
+    )
+
+    whatsapp_btn.click(generate_whatsapp_link, outputs=share_output)
+    facebook_btn.click(generate_facebook_link, outputs=share_output)
+
+print("\n✅ Doc-Genie v2.0 Ready!\n")
+
+demo.launch(share=True, show_error=True, show_api=False)
